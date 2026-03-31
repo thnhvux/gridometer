@@ -9,9 +9,9 @@
 int main() {
     try {
         std::cout << "Starting pipeline\n";
-        
+
         std::string db_file = "grid_data_demo.db";
-        std::string data_file = "./data/raw/PUB_Demand.csv";
+        std::string data_file = "./data/raw/PUB_Demand_2026_v90.csv";
         std::string out_dir = "./data/export";
 
         //Ensuring each run is new
