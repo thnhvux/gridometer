@@ -11,6 +11,7 @@ find_package(Threads REQUIRED)
 
 include_directories(${CMAKE_SOURCE_DIR}/src)
 include_directories(${CMAKE_SOURCE_DIR}/external)
+include_directories(${CMAKE_SOURCE_DIR}/external/nlohmann)
 include_directories(${CMAKE_SOURCE_DIR}/external/sqlite3)
 
 set(SOURCES

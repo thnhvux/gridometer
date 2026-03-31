@@ -1,0 +1,19 @@
+{
+  "paths": {
+    "input_csv": "data/raw/PUB_Demand.csv",
+    "db_path": "data/database/grid_data.db",
+    "forecast_output_dir": "data/export",
+    "report_path": "output/daily_report.txt"
+  },
+  "forecast": {
+    "horizon_hours": 168
+  },
+  "anomaly": {
+    "zscore_threshold": 2.5
+  },
+  "indicators": {
+    "ema_window": 24,
+    "rsi_period": 14,
+    "bb_window": 20
+  }
+}

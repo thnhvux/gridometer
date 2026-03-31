@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <iostream>
 #include <string>
 
@@ -6,20 +7,32 @@
 #include "analytic.hpp"
 
 int main() {
-    std::cout << "=== Gridometer Pipeline Started ===" << std::endl;
+    try {
+        std::cout << "Starting pipeline\n";
+        
+        std::string db_file = "grid_data_demo.db";
+        std::string data_file = "./data/raw/PUB_Demand.csv";
+        std::string out_dir = "./data/export";
 
-    std::cout << "[1/3] Initializing SQLite database..." << std::endl;
-    Database db("grid_data.db");
-    db.initSchema();
+        //Ensuring each run is new
+        std::filesystem::create_directories(out_dir);
+        std::filesystem::remove(db_file);
 
-    std::string data_file = "../data/raw/PUB_Demand.csv"; 
-    std::cout << "[2/3] Ingesting CSV data from: " << data_file << std::endl;
-    CSVParser::csvIngest(data_file, db);
+        std::cout << "Initializing SQLite database...\n";
+        Database db(db_file);
+        db.initSchema();
 
-    std::cout << "[3/3] Running technical analysis and generating forecast..." << std::endl;
-    
-    Analytic::generateForecast(db.getDB(), "Forecast_7Days.csv");
+        std::cout << "Ingesting CSV data from: " << data_file << "\n";
+        CSVParser::csvIngest(data_file, db);
 
-    std::cout << "=== Pipeline Execution Finished ===" << std::endl;
-    return 0;
+        std::cout << "Running analysis and generating forecast...\n";
+        Analytic::generateForecast(db.getDB(), out_dir);
+
+        std::cout << "Completed\n";
+        return 0;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Pipeline failed: " << e.what() << "\n";
+        return 1;
+    }
 }
