@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+
+  "filters": {
+    "noapikey": { "()": "src.utils.helper_class.NoAPIKeyFilter" }
+  },
+
+  "formatters": {
+    "basic": {
+      "format": "[%(asctime)s.%(msecs)03d] [%(levelname)s]: %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S"
+    },
+    "iso8601": {
+      "format": "[%(asctime)s.%(msecs)03d] [%(levelname)s] [%(module)s:%(lineno)d]: %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S"
+    }
+  },
+
+  "handlers": {
+    "stderr": {
+      "class": "logging.StreamHandler",
+      "filters": ["noapikey"],
+      "formatter": "iso8601",
+      "level": "WARNING",
+      "stream": "ext://sys.stderr"
+    },
+    "user_file": {
+      "class": "logging.handlers.RotatingFileHandler",
+      "filters": ["noapikey"],
+      "formatter": "basic",
+      "level": "INFO",
+      "filename": "logs/project_a.log",
+      "maxBytes": 200000,
+      "backupCount": 5
+    }
+  },
+
+  "root": {  
+    "level": "DEBUG",
+    "handlers": ["stderr", "user_file"]
+  }
+}
