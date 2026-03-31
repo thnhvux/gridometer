@@ -2,6 +2,10 @@
 #ifndef ANALYTIC_HPP
 #define ANALYTIC_HPP
 
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+#include <string>
 #include <cmath>
 #include <filesystem>
 #include <format>
@@ -73,32 +77,65 @@ class Analytic{
     return history_demands;
   }
 
-  static std::chrono::local_time<std::chrono::seconds> getLocalTime(const std::string& iso8601_time){
-    if (iso8601_time.size() < 19) throw std::runtime_error("Bad format\n");
-    //Parser from C++20
-    std::istringstream in(iso8601_time.substr(0, 19));
-    std::chrono::local_time<std::chrono::seconds> time;
-    in >> std::chrono::parse("%FT%T", time);
-    if (in.fail()) throw std::runtime_error("Unable to get local time\n");
-    
-    return time;
+  static std::tm parseLocalTimeSimple(const std::string& local_time_with_offset) {
+    // Expected example: 2026-03-31T13:00:00-05:00
+    // Use only the first 19 chars: 2026-03-31T13:00:00
+    if (local_time_with_offset.size() < 19) {
+        throw std::runtime_error("Bad local_time format.");
+    }
+
+    std::string s = local_time_with_offset.substr(0, 19);
+
+    std::tm tm_val{};
+    tm_val.tm_year = std::stoi(s.substr(0, 4)) - 1900;
+    tm_val.tm_mon  = std::stoi(s.substr(5, 2)) - 1;
+    tm_val.tm_mday = std::stoi(s.substr(8, 2));
+    tm_val.tm_hour = std::stoi(s.substr(11, 2));
+    tm_val.tm_min  = std::stoi(s.substr(14, 2));
+    tm_val.tm_sec  = std::stoi(s.substr(17, 2));
+
+    return tm_val;
+  } 
+
+  static std::string formatDateTime(const std::tm& tm_val) {
+      std::ostringstream out;
+      out << std::put_time(&tm_val, "%Y-%m-%dT%H:%M:%S");
+      return out.str();
   }
 
-  static DemandPoint advanceToNextHourDemand(const DemandPoint& last_hour, int hour){
-    const std::chrono::local_time<std::chrono::seconds> current_lt = getLocalTime(last_hour.local_time);
-    const std::chrono::local_time<std::chrono::seconds> next_lt = current_lt + std::chrono::hours(hour);
+  static DemandPoint advanceToNextHourDemand(const DemandPoint& last_hour, int hour) {
+    std::tm local_tm = parseLocalTimeSimple(last_hour.local_time);
+
+    std::time_t t = std::mktime(&local_tm);
+    if (t == -1) {
+        throw std::runtime_error("Could not convert local time.");
+    }
+
+    t += static_cast<std::time_t>(hour) * 3600;
+
+    std::tm next_local_tm{};
+#ifdef _WIN32
+    localtime_s(&next_local_tm, &t);
+#else
+    localtime_r(&t, &next_local_tm);
+#endif
 
     DemandPoint next_entry;
     next_entry.region = last_hour.region;
-    next_entry.timezone = "";
-    if (last_hour.timezone.empty()) next_entry.timezone = "EST";
-    else next_entry.timezone = last_hour.timezone;
-    next_entry.local_time = std::format("{:%FT%T}", next_lt);
-    //For simplicity, EST here is always -5
-    //and not accounting for daylight saving time
-    //Move local time forward by adding 5 to it in chrono
-    const std::chrono::sys_seconds next_utc_time{next_lt.time_since_epoch() + std::chrono::hours(5)};
-    next_entry.utc_time = std::format("{:%FT%TZ}", next_utc_time);
+    next_entry.timezone = last_hour.timezone.empty() ? "EST" : last_hour.timezone;
+    next_entry.local_time = formatDateTime(next_local_tm) + "-05:00";
+
+    // Demo-safe UTC approximation
+    std::time_t utc_t = t + 5 * 3600;
+
+    std::tm next_utc_tm{};
+#ifdef _WIN32
+    gmtime_s(&next_utc_tm, &utc_t);
+#else
+    gmtime_r(&utc_t, &next_utc_tm);
+#endif
+
+    next_entry.utc_time = formatDateTime(next_utc_tm) + "Z";
 
     return next_entry;
   }

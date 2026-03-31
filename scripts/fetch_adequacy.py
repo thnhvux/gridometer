@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from logger import _setup_logging, _call_logger
 
 #Internal
 _BASE_URL = "https://reports-public.ieso.ca/public/Adequacy3/"
@@ -38,14 +39,15 @@ def _filter_lastest(html_text: str) -> list[str]:
 
 #External
 def fetch_adequacy() -> None:
+  _setup_logging()
+  log = _call_logger("gridometer_fetch_adequacy")
+
   _html_response = requests.get(_BASE_URL)
-  #<> Log
   _html_response.raise_for_status()
-  #<> Log success
   _html_text: str = _html_response.text
 
   _to_download_files: list[str] = _filter_lastest(_html_text)
-  #<> Log amount of downloadable files
+  log.info("Adequacy files selected: %s", _to_download_files)
 
   with requests.Session() as _session:
     #Retry/Backoff
@@ -103,10 +105,11 @@ def fetch_adequacy() -> None:
 
             for _hour_out, _data_out in _hourly_forecast_data.items():
               _f_out.writerow([_delivery_date, _hour_out, _data_out['ForecastOntDemand'], _data_out['AverageOntDemand']])
-          #<>Log successful write
+          
+          log.info("Downloaded %s", _f_save_path.name)
       except requests.exceptions.RequestException as e:
-        #Log error
-        print(e)
+        log.error("Failed to download %s: %s", _f_name_xml, e)
+        raise
       
       time.sleep(1)
 

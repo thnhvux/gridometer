@@ -3,60 +3,85 @@
 #define DATABASE_HPP
 
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
-#include <sqlite3.h>
+#include "sqlite3.h"
 
-class Database{
+class Database {
   private:
-    sqlite3* db_;
-  
+    sqlite3* db_ = nullptr;
+
   public:
-    Database(const std::string& db_path){
-      if (sqlite3_open(db_path.c_str(), &db_) != SQLITE_OK){
-        std::cerr << "Fatal" << sqlite3_errmsg(db_) << "\n";
-        exit(1);
+    explicit Database(const std::string& db_file) {
+      if (sqlite3_open(db_file.c_str(), &db_) != SQLITE_OK) {
+        std::string msg = sqlite3_errmsg(db_);
+        sqlite3_close(db_);
+        db_ = nullptr;
+        throw std::runtime_error("Failed to open SQLite database: " + msg);
       }
     }
 
-    ~Database(){sqlite3_close(db_);}
-
-    void initSchema(){
-      const char* sql = 
-        "CREATE TABLE IF NOT EXISTS DemandData("
-        "region TEXT, "
-        "utc_time TEXT, "
-        "local_time TEXT, "
-        "timezone TEXT, "
-        "demand REAL"
-        ");";
-
-      char* _err_msg = nullptr;
-      if (sqlite3_exec(db_, sql, nullptr, nullptr, &_err_msg) != SQLITE_OK){
-        std::cerr << "SQL error" << _err_msg << "\n";
-        sqlite3_free(_err_msg);
+    ~Database() {
+      if (db_ != nullptr) {
+        sqlite3_close(db_);
+        db_ = nullptr;
       }
-      else std::cout << "Success\n"; //<> Log
     }
 
-    void insertDataRow(const std::string& region, const std::string& utc, const std::string& local, const std::string& tz, double demand){
-      const char* sql = "INSERT INTO DemandData (region, utc_time, local_time, timezone, demand) VALUES (?, ?, ?, ?, ?);";
-      sqlite3_stmt* stmt;
+    sqlite3* getDB() const {
+      return db_;
+    }
 
-      if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) == SQLITE_OK){
-        sqlite3_bind_text(stmt, 1, region.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, utc.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 3, local.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 4, tz.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_double(stmt, 5, demand);
+    void initSchema() {
+      const char* sql = R"(
+        CREATE TABLE IF NOT EXISTS DemandData (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          region TEXT NOT NULL,
+          utc_time TEXT NOT NULL,
+          local_time TEXT NOT NULL,
+          timezone TEXT NOT NULL,
+          demand REAL NOT NULL
+        );
+      )";
 
-        sqlite3_step(stmt);
+      char* err_msg = nullptr;
+      int rc = sqlite3_exec(db_, sql, nullptr, nullptr, &err_msg);
+      if (rc != SQLITE_OK) {
+        std::string msg = err_msg ? err_msg : "unknown schema error";
+        sqlite3_free(err_msg);
+        throw std::runtime_error("Failed to initialize schema: " + msg);
+      }
+
+      std::cout << "Success\n";
+    }
+
+    void insertDataRow(const std::string& region, const std::string& utc_time, const std::string& local_time, const std::string& timezone, double demand) {
+      const char* sql =
+          "INSERT INTO DemandData (region, utc_time, local_time, timezone, demand) "
+          "VALUES (?, ?, ?, ?, ?);";
+
+      sqlite3_stmt* stmt = nullptr;
+      int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+      if (rc != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare insert statement.");
+      }
+
+      sqlite3_bind_text(stmt, 1, region.c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(stmt, 2, utc_time.c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(stmt, 3, local_time.c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(stmt, 4, timezone.c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_double(stmt, 5, demand);
+
+      rc = sqlite3_step(stmt);
+      if (rc != SQLITE_DONE) {
+        std::string msg = sqlite3_errmsg(db_);
+        sqlite3_finalize(stmt);
+        throw std::runtime_error("Failed to insert row: " + msg);
       }
 
       sqlite3_finalize(stmt);
     }
-
-    sqlite3* getDB() { return db_; }
 };
 
-#endif // DATABASE_HPP
+#endif

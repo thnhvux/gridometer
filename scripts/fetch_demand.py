@@ -7,6 +7,8 @@ from pathlib import Path
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from logger import _call_logger, _setup_logging
+
 #Internal
 _BASE_URL = "https://reports-public.ieso.ca/public/Demand/"
 _FILENAME_RE = re.compile(
@@ -43,10 +45,10 @@ def _filter_lastest_by_year(html_text: str, fetch_range: int = 3) -> list[str]:
 
 #External
 def fetch_demand() -> None:
+  _setup_logging()
+  log = _call_logger("gridometer_fetch_demand")
   _html_response = requests.get(_BASE_URL)
-  #<> Log
   _html_response.raise_for_status()
-  #<> Log success
   _html_text = _html_response.text
 
   _FETCH_RANGE = 3
@@ -76,10 +78,10 @@ def fetch_demand() -> None:
           _download_response.raise_for_status()
           with open(_f_save_path, "wb") as f:
             f.write(_download_response.content)
-        #<>Log successful write
+        log.info("Downloaded %s", _f_save_path.name)
       except requests.exceptions.RequestException as e:
-        #Log error
-        print(e)
+        log.error("Failed to download %s: %s", _f_save_path, e)
+        raise
       
       time.sleep(1)
 
