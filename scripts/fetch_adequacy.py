@@ -1,8 +1,6 @@
-import csv
 import re
 import requests
 import time
-import xml.etree.ElementTree as ET
 
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -20,6 +18,8 @@ _CUR_PATH: Path = Path(__file__).resolve()
 _ROOT_PATH: Path = _CUR_PATH.parent.parent
 _DATA_RAW_DIR: Path = _ROOT_PATH/"data"/"raw"
 _DATA_RAW_DIR.mkdir(parents=True, exist_ok=True)
+_DATA_ADEQUACY_DIR: Path = _DATA_RAW_DIR/"adequacy"
+_DATA_ADEQUACY_DIR.mkdir(parents=True, exist_ok=True)
 
 #Return full names of latest files
 def _filter_lastest(html_text: str) -> list[str]:
@@ -68,44 +68,14 @@ def fetch_adequacy() -> None:
 
     for _f_name_xml in _to_download_files:
       _download_url: str = _BASE_URL + _f_name_xml
-      _f_name_csv: str = _f_name_xml.replace(".xml", ".csv")
-      _f_save_path = _DATA_RAW_DIR/_f_name_csv
+      _f_save_path = _DATA_ADEQUACY_DIR/_f_name_xml
       try:
-        with _session.get(_download_url, timeout=10, stream=True) as _download_response:
-          _download_response.raise_for_status()
+          with _session.get(_download_url, timeout=10, stream=True) as _download_response:
+            _download_response.raise_for_status()
 
-          _xml_root = ET.fromstring(_download_response.content)
-          _delivery_date_xml = _xml_root.find(".//ieso:DeliveryDate", _xml_namespace)
-          _delivery_date = _delivery_date_xml.text if _delivery_date_xml is not None else "Unknown"
-          _hourly_forecast_data : dict = {str(i): 
-            {"ForecastOntDemand": "", "AverageOntDemand": ""} for i in range (1,25)}
-
-
-          #Forecast Demand
-          for _demand in _xml_root.findall('.//ieso:OntarioDemand/ieso:ForecastOntDemand/ieso:Demand', _xml_namespace):
-            _hour_extract = _demand.find('ieso:DeliveryHour', _xml_namespace)
-            _energy_extract = _demand.find('ieso:EnergyMW', _xml_namespace)
-            if _hour_extract is not None and _energy_extract is not None:
-              _hour = _hour_extract.text
-              if _hour in _hourly_forecast_data:
-                _hourly_forecast_data[_hour]['ForecastOntDemand'] = _energy_extract.text
-
-          #Average Forecast Demand
-          for _demand in _xml_root.findall('.//ieso:OntarioDemand/ieso:AverageDemand/ieso:Demand', _xml_namespace):
-            _hour_extract = _demand.find('ieso:DeliveryHour', _xml_namespace)
-            _energy_extract = _demand.find('ieso:EnergyMW', _xml_namespace)
-            if _hour_extract is not None and _energy_extract is not None:
-              _hour = _hour_extract.text
-              if _hour in _hourly_forecast_data:
-                _hourly_forecast_data[_hour]['AverageOntDemand'] = _energy_extract.text
-
-          with open(_f_save_path, "w", newline="") as f:
-            _f_out = csv.writer(f)
-            _f_out.writerow(["Date", "Hour", "Forecast Ontario Demand", "Average Ontario Demand"])
-
-            for _hour_out, _data_out in _hourly_forecast_data.items():
-              _f_out.writerow([_delivery_date, _hour_out, _data_out['ForecastOntDemand'], _data_out['AverageOntDemand']])
-          
+            with open(_f_save_path, "wb") as f:
+              for chunk in _download_response.iter_content(chunk_size=8192): f.write(chunk)
+              
           log.info("Downloaded %s", _f_save_path.name)
       except requests.exceptions.RequestException as e:
         log.error("Failed to download %s: %s", _f_name_xml, e)

@@ -13,14 +13,25 @@ include_directories(${CMAKE_SOURCE_DIR}/src)
 include_directories(${CMAKE_SOURCE_DIR}/external)
 include_directories(${CMAKE_SOURCE_DIR}/external/nlohmann)
 include_directories(${CMAKE_SOURCE_DIR}/external/sqlite3)
+include_directories(${CMAKE_SOURCE_DIR}/external/pugixml-1.15)
+include_directories(${CMAKE_SOURCE_DIR}/external/pugixml-1.15/src)
 
 set(SOURCES
     src/main.cpp
+    external/sqlite3/sqlite3.c
+    external/pugixml-1.15/src/pugixml.cpp
 )
+#set(SQLITE_SOURCE external/sqlite3/sqlite3.c)
 
-set(SQLITE_SOURCE external/sqlite3/sqlite3.c)
+add_executable(gridometer ${SOURCES})
+#add_executable(gridometer ${SOURCES} ${SQLITE_SOURCE})
 
-add_executable(gridometer ${SOURCES} ${SQLITE_SOURCE})
+target_include_directories(gridometer PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/external/pugixml-1.15
+    ${CMAKE_SOURCE_DIR}/external/sqlite3
+    ${CMAKE_SOURCE_DIR}/external/nlohmann
+)
 
 target_link_libraries(gridometer PRIVATE Threads::Threads)
 

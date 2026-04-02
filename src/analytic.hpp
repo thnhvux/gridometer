@@ -16,260 +16,375 @@
 #include <string>
 #include <vector>
 
-#include "database.hpp"
+#include "pipeline.hpp"
 #include "indicator.hpp"
 
 
-class Analytic{
+class Analytic{ 
   private:
+  /*
+    struct JoinedPoint{
+      std::string date;
+      int hour;
+      double demand;
+      double adequacy_forecast;
+    };
+  */
+
     struct DemandPoint{
-    std::string region;
-    std::string utc_time;
-    std::string local_time;
-    std::string timezone;
-    double demand;
-  };
+      std::string date;
+      int hour = 0;
+      double demand = 0.0;
+    };
 
-  struct FeaturePoint{
-    double lag1 = 0.0;
-    double lag24 = 0.0;
-    double lag168 = 0.0;
-    double ema24 = 0.0;
-    double macd = 0.0;
-    double macd_hist = 0.0;
-    double rsi14 = 0.0;
-    double percent_b = 0.0;
-    double bandwidth = 0.0;
-  };
+    struct AdequacyPoint{
+      std::string date;
+      int hour = 0;
+      double forecast = 0.0;
+      double average = 0.0;
+    };
 
-  struct ForecastPoint{
-    std::string region;
-    std::string utc_time;
-    std::string local_time;
-    std::string timezone;
-    double forecast_demand = 0.0;
-  };
+    struct CalculatedForecastRow{
+      std::string date;
+      int hour = 0;
+      double forecast = 0.0;
+    };
 
-  //Helper
-  static std::vector<DemandPoint> loadDemandHistory(sqlite3* db){
-    std::vector<DemandPoint> history_demands;
-    const char* sql = 
-    "SELECT region, utc_time, local_time, timezone, demand "
-    "FROM DemandData ORDER BY utc_time";
-    
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
-      throw std::runtime_error("Could not get demand history\n");
+    struct FeatureRow{
+      std::string date;
+      int hour;
+      double demand;
+      double adequacy_forecast;
+      double calculated_forecast;
 
-    while (sqlite3_step(stmt) == SQLITE_ROW){
-      DemandPoint data_row;
-      //Convert const unsigned char* to string
-      data_row.region = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-      data_row.utc_time = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-      data_row.local_time = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-      data_row.timezone = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-      data_row.demand = sqlite3_column_double(stmt, 4);
+      double lag1;
+      double lag24;
+      double lag168;
+      double ema24;
+      double macd;
+      double macd_hist;
+      double rsi14;
+      double percent_b;
+      double bandwidth;
+    };
 
-      history_demands.push_back(data_row);
-    }
+    struct ComparisonRow{
+      std::string date;
+      int hour;
+      double demand;
+      double adequacy_forecast;
+      double calculated_forecast;
+      double abs_diff; //abs(calculated-adequacy)
+      double pct_diff; //%diff vs adequacy
+    };
 
-    sqlite3_finalize(stmt);
-    return history_demands;
-  }
+  public: 
+  /*
+    static std::vector<JoinedPoint> loadJoinedRows(sqlite3* db){
+      std::vector<JoinedPoint> rows;
+      std::string sql = R"sql(
+        SELECT D.DATE, D.HOUR, D.DEMAND, A.FORECAST
+        FROM DEMAND_HISTORY D
+        JOIN ADEQUACY A
+          ON D.DATE = A.DATE AND D.HOUR = A.HOUR
+        ORDER BY D.DATE ASC, D.HOUR ASC;
+      )sql";
 
-  static std::tm parseLocalTimeSimple(const std::string& local_time_with_offset) {
-    // Expected example: 2026-03-31T13:00:00-05:00
-    // Use only the first 19 chars: 2026-03-31T13:00:00
-    if (local_time_with_offset.size() < 19) {
-        throw std::runtime_error("Bad local_time format.");
-    }
-
-    std::string s = local_time_with_offset.substr(0, 19);
-
-    std::tm tm_val{};
-    tm_val.tm_year = std::stoi(s.substr(0, 4)) - 1900;
-    tm_val.tm_mon  = std::stoi(s.substr(5, 2)) - 1;
-    tm_val.tm_mday = std::stoi(s.substr(8, 2));
-    tm_val.tm_hour = std::stoi(s.substr(11, 2));
-    tm_val.tm_min  = std::stoi(s.substr(14, 2));
-    tm_val.tm_sec  = std::stoi(s.substr(17, 2));
-
-    return tm_val;
-  } 
-
-  static std::string formatDateTime(const std::tm& tm_val) {
-      std::ostringstream out;
-      out << std::put_time(&tm_val, "%Y-%m-%dT%H:%M:%S");
-      return out.str();
-  }
-
-  static DemandPoint advanceToNextHourDemand(const DemandPoint& last_hour, int hour) {
-    std::tm local_tm = parseLocalTimeSimple(last_hour.local_time);
-
-    std::time_t t = std::mktime(&local_tm);
-    if (t == -1) {
-        throw std::runtime_error("Could not convert local time.");
-    }
-
-    t += static_cast<std::time_t>(hour) * 3600;
-
-    std::tm next_local_tm{};
-#ifdef _WIN32
-    localtime_s(&next_local_tm, &t);
-#else
-    localtime_r(&t, &next_local_tm);
-#endif
-
-    DemandPoint next_entry;
-    next_entry.region = last_hour.region;
-    next_entry.timezone = last_hour.timezone.empty() ? "EST" : last_hour.timezone;
-    next_entry.local_time = formatDateTime(next_local_tm) + "-05:00";
-
-    // Demo-safe UTC approximation
-    std::time_t utc_t = t + 5 * 3600;
-
-    std::tm next_utc_tm{};
-#ifdef _WIN32
-    gmtime_s(&next_utc_tm, &utc_t);
-#else
-    gmtime_r(&utc_t, &next_utc_tm);
-#endif
-
-    next_entry.utc_time = formatDateTime(next_utc_tm) + "Z";
-
-    return next_entry;
-  }
-
-  //Anomaly detection using z-score
-    //z = (x - mu)/sigma
-    //with mu = mean; sigma = standard deviation
-  static int countAnomaly(const std::vector<DemandPoint>& history_demands){
-    
-    if (history_demands.empty()) return 0;
-    double sum = 0;
-    for (const DemandPoint point : history_demands) sum += point.demand;
-    double mean = sum / history_demands.size();
-    double sq_sum = 0;
-    for (const DemandPoint& point : history_demands) sq_sum += std::pow((point.demand-mean), 2);
-    double std_dev = std::sqrt(sq_sum/history_demands.size());
-    
-    int anomaly_cnt = 0;
-
-    for (const DemandPoint& point : history_demands){
-      double z_score = std::abs((point.demand-mean)/std_dev);
-      if (z_score > 2.5) anomaly_cnt++;
-    }
-
-    return anomaly_cnt;
-  }
-
-  static FeaturePoint generateFeature(const std::vector<double>& series) {
-    FeaturePoint feature_point;
-
-    const size_t n = series.size();
-    feature_point.lag1 = series[n - 1];
-    feature_point.lag24 = series[n - 24];
-    feature_point.lag168 = series[n - 168];
-
-    auto calculated_ema24 = Indicator::calculateEMA(series, 24);
-    auto calculated_macd = Indicator::calculateMACD(series);
-    auto calculated_rsi14 = Indicator::calculateRSI(series, 14);
-    auto calculated_bb = Indicator::calculateBoillingerBand(series, 20);
-
-    feature_point.ema24 = calculated_ema24.back();
-    feature_point.macd = calculated_macd.macd.back();
-    feature_point.macd_hist = calculated_macd.hist.back();
-    feature_point.rsi14 = calculated_rsi14.back();
-    feature_point.percent_b = calculated_bb.percent_b.back();
-    feature_point.bandwidth = calculated_bb.bandwitdth.back();
-
-    return feature_point;
-  }
-
-  static double forecastNextHourDemand(const FeaturePoint& point) {
-    // Strong seasonal baseline first
-    double prediction_point = 0.60 * point.lag24 + 0.30 * point.lag168 + 0.10 * point.ema24;
-
-    if (point.rsi14 > 70.0) prediction_point *= 0.995;
-    else if (point.rsi14 < 30.0) prediction_point *= 1.005;
-
-    if (point.macd_hist > 0.0) prediction_point *= 1.002;
-    else if (point.macd_hist < 0.0) prediction_point *= 0.998;
-
-    if (point.percent_b > 0.95) prediction_point *= 0.997;
-    else if (point.percent_b < 0.05) prediction_point *= 1.003;
-
-    return std::max(0.0, prediction_point);
-  }
-
-  //Separate export into multiple .csv files
-  static void exportDailyForecast(const std::vector<ForecastPoint>& points, const std::string& out_dir){
-    std::filesystem::create_directory(out_dir);
-
-    std::map<std::string, std::vector<ForecastPoint>> data_sorted_by_day;
-    //Example local time entry: 2026-01-31T12:00:00-05:00
-    for (const ForecastPoint& point : points) 
-      data_sorted_by_day[point.local_time.substr(0, 10)].push_back(point);
-    //Temp var is in std::map<std::string, std::vector<ForecastPoint>>
-    for (const auto& [date, rows] : data_sorted_by_day){
-      std::string data_date = date;
-      //File name will be Forecast_20260131.csv
-      data_date.erase(std::remove(data_date.begin(), data_date.end(), '-'), data_date.end());
-      const std::filesystem::path out_path = std::filesystem::path(out_dir)/("Forecast_" + data_date + ".csv");
-
-      std::ofstream out(out_path);
-      if (!out.is_open()) throw std::runtime_error("Unable to open export file\n");
-      out << "Region,UTC Time,Local Time,Timezone,Ontario Demand,Forecast Ontario Demand\n";
-      //Temp var is in std::vector<ForecastPoint>
-      for (const auto&row : rows)
-        out << row.region << "," << row.utc_time << "," << row.local_time << "," << row.timezone << "," << row.forecast_demand << "\n";
-    }
-  }
-  
-  public:
-    static void generateForecast(sqlite3* db, const std::string& out_dir){
-      const int kForecastWindowInDay = 7;
-      const int kForecastWindowInHour = kForecastWindowInDay*24; 
-      std::vector<DemandPoint> history_contents = loadDemandHistory(db);
-      if (history_contents.size() < kForecastWindowInHour){
-        const std::string err_msg = std::format("Not enough history for {}-day forecast", kForecastWindowInDay);
-        throw std::runtime_error(err_msg);
+      sqlite3_stmt* stmt = nullptr;
+      if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK){
+        std::string err = std::format("Unable to prepare statement `{}`: {}", sql, sqlite3_errmsg(db));
+        throw std::runtime_error(err);
       }
+      while (sqlite3_step(stmt) == SQLITE_ROW){
+        JoinedPoint row;
+        row.date = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        row.hour = sqlite3_column_int(stmt, 1);
+        row.demand = sqlite3_column_double(stmt, 2);
+        row.adequacy_forecast = sqlite3_column_double(stmt, 3);
+        rows.push_back(row);
+      }
+
+      sqlite3_finalize(stmt);
+      return rows;
+    }
+    */
+
+    static std::vector<DemandPoint> loadDemandHistory(sqlite3* db){
+      std::vector<DemandPoint> rows;
+
+      std::string sql = R"sql(
+          SELECT DATE, HOUR, DEMAND
+          FROM DEMAND_HISTORY
+          ORDER BY DATE ASC, HOUR ASC;
+      )sql";
+
+      sqlite3_stmt* stmt = nullptr;
+      if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {throw std::runtime_error("Failed to load demand history");}
+
+      while (sqlite3_step(stmt) == SQLITE_ROW) {
+          DemandPoint row;
+          row.date = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+          row.hour = sqlite3_column_int(stmt, 1);
+          row.demand = sqlite3_column_double(stmt, 2);
+          rows.push_back(row);
+      }
+
+      sqlite3_finalize(stmt);
+      return rows;
+    }
+
+    static std::vector<AdequacyPoint> loadAdequacyRows(sqlite3* db) {
+      std::vector<AdequacyPoint> rows;
+
+      std::string sql = R"sql(
+        SELECT DATE, HOUR, FORECAST, AVERAGE
+        FROM ADEQUACY
+        ORDER BY DATE ASC, HOUR ASC;
+      )sql";
+
+      sqlite3_stmt* stmt = nullptr;
+      if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {throw std::runtime_error("Failed to load adequacy rows");}
+
+      while (sqlite3_step(stmt) == SQLITE_ROW) {
+        AdequacyPoint row;
+        row.date = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        row.hour = sqlite3_column_int(stmt, 1);
+        row.forecast = sqlite3_column_double(stmt, 2);
+        row.average = sqlite3_column_double(stmt, 3);
+        rows.push_back(row);
+      }
+
+      sqlite3_finalize(stmt);
+      return rows;
+    }
+
+    static double calculateNextHourForecast(const std::vector<double>& history){
+      if (history.size() < 168){throw std::runtime_error("Need at least 168 historical demand data to forecast");}
+
+      const size_t n = history.size();
+      const double lag24 = history[n-24];
+      const double lag168 = history[n-168];
+
+      auto ema24_series = Indicator::calculateEMA(history, 24);
+      auto macd_series = Indicator::calculateMACD(history);
+      auto rsi14_series = Indicator::calculateRSI(history, 14);
+      auto bb20_series = Indicator::calculateBoillingerBand(history, 20);
+
+      const double ema24 = ema24_series.back();
+      const double macd_hist = macd_series.hist.back();
+      const double rsi14 = rsi14_series.back();
+      const double percent_b = bb20_series.percent_b.back();
+
+      double forecast = 0.60*lag24+0.30*lag168+0.10*ema24;
+
+      if (rsi14 > 70.0) forecast *= 0.995;
+      else if (rsi14 < 30) forecast *= 1.005;
       
-      std::vector<double> history_demands;
-      history_demands.reserve(history_contents.size() + kForecastWindowInHour);
-      for (const auto& row : history_contents) history_demands.push_back(row.demand);
-      std::vector<ForecastPoint> forecast_out;
-      forecast_out.reserve(kForecastWindowInHour);
+      if (macd_hist > 0.0) forecast *= 1.002;
+      else if (macd_hist < 0.0) forecast *= 0.998;
 
-      DemandPoint last_hour_data = history_contents.back();
-      for (size_t i = 0; i < kForecastWindowInHour; i++){
-        FeaturePoint feature = generateFeature(history_demands);
-        double next_val = forecastNextHourDemand(feature);
-        DemandPoint next_hour_data = advanceToNextHourDemand(last_hour_data, i+1);
-        forecast_out.push_back(ForecastPoint{
-          next_hour_data.region, next_hour_data.utc_time, next_hour_data.local_time, next_hour_data.timezone, next_val
-        });
-        history_demands.push_back(next_val);
+      if (percent_b > 0.95) forecast *= 0.997;
+      else if (percent_b < 0.05) forecast *= 1.003;
+
+      return std::max(0.0, forecast);
+    }
+
+    static std::vector<CalculatedForecastRow> generateCalculatedForecastRows(const std::vector<DemandPoint>& demand_history, const std::vector<AdequacyPoint>& adequacy_rows){
+      std::vector<CalculatedForecastRow> output;
+      std::vector<double> history;
+
+      for (const auto& row : demand_history){history.push_back(row.demand);}
+
+      for (const auto& a : adequacy_rows){
+        double next_forecast = calculateNextHourForecast(history);
+
+        CalculatedForecastRow out;
+        out.date = a.date;
+        out.hour = a.hour;
+        out.forecast = next_forecast;
+        output.push_back(out);
+
+        history.push_back(next_forecast);
+      }
+      return output;
+    }
+
+    static double computePCTDifference(double calculated, double adequacy){
+      if (adequacy == 0.0) return 0.0;
+      return ((calculated-adequacy)/adequacy)*100.0;
+    }
+
+    static std::vector<ComparisonRow> compareCalculatedToAdequacy(const std::vector<CalculatedForecastRow>& calculated, const std::vector<AdequacyPoint>& adequacy) {
+      if (calculated.size() != adequacy.size()){throw std::runtime_error("Calculated and adequacy forecast sizes do not match");}
+
+      std::vector<ComparisonRow> output;
+
+      for (size_t i = 0; i < adequacy.size(); ++i){
+        ComparisonRow row;
+        row.date = adequacy[i].date;
+        row.hour = adequacy[i].hour;
+        row.adequacy_forecast = adequacy[i].forecast;
+        row.calculated_forecast = calculated[i].forecast;
+        row.abs_diff = row.calculated_forecast - row.adequacy_forecast;
+        row.pct_diff = computePCTDifference(row.calculated_forecast, row.adequacy_forecast);
+        output.push_back(row);
+      }
+      return output;
+    }
+
+    /*
+    static std::vector<ComparisonRow> buildComparisonRows(const std::vector<JoinedPoint>& rows){
+      std::vector<ComparisonRow> outputs;
+      std::vector<double> histories;
+
+      for (const auto& row : rows){
+        if(histories.size() >= 168){
+          double calculated = calculateNextHourForecast(histories);
+
+          ComparisonRow out;
+          out.date = row.date;
+          out.hour = row.hour;
+          out.demand = row.demand;
+          out.adequacy_forecast = row.adequacy_forecast;
+          out.calculated_forecast = calculated;
+          out.abs_diff = std::abs(calculated - row.adequacy_forecast);
+          out.pct_diff = computePCTDifference(calculated, row.adequacy_forecast);
+
+          outputs.push_back(out);
+        }
+
+        histories.push_back(row.demand);
       }
 
-      exportDailyForecast(forecast_out, out_dir);
-
-      //Anomaly checking
-      size_t anomaly_cnt = countAnomaly(history_contents);
-
-      //Console output
-      double sum = 0.0;
-      for (const auto& row : history_contents) sum += row.demand;
-      double mean = sum/history_contents.size();
-
-      std::cout << "\nDaily Report\n";
-      std::cout << std::format("Total Hours: {}\n", history_contents.size());
-      std::cout << std::format("Average Ontario Demand: {}\n", mean);
-      std::cout << std::format("Anomaly point: {}\n", anomaly_cnt);
-      std::cout << std::format("Forecast for next {} days ({} hours)\n", kForecastWindowInDay, kForecastWindowInHour);
+      return outputs;
     }
-    
+    */
+
+    static FeatureRow buildFeatureRow(const ComparisonRow& current, const std::vector<double>& history) {
+      if (history.size() < 168) {throw std::runtime_error("Need at least 168 rows of history");}
+
+      auto ema24 = Indicator::calculateEMA(history, 24);
+      auto macd = Indicator::calculateMACD(history);
+      auto rsi14 = Indicator::calculateRSI(history, 14);
+      auto bb20 = Indicator::calculateBoillingerBand(history, 20);
+
+      const size_t n = history.size();
+
+      FeatureRow out;
+      out.date = current.date;
+      out.hour = current.hour;
+      out.demand = current.demand;
+      out.adequacy_forecast = current.adequacy_forecast;
+      out.calculated_forecast = current.calculated_forecast;
+
+      out.lag1 = history[n - 1];
+      out.lag24 = history[n - 24];
+      out.lag168 = history[n - 168];
+      out.ema24 = ema24.back();
+      out.macd = macd.macd.back();
+      out.macd_hist = macd.hist.back();
+      out.rsi14 = rsi14.back();
+      out.percent_b = bb20.percent_b.back();
+      out.bandwidth = bb20.bandwitdth.back();
+
+      return out;
+    }
+
+    static std::vector<FeatureRow> buildFeatureRows(const std::vector<ComparisonRow>& rows) {
+      std::vector<FeatureRow> output;
+      std::vector<double> history;
+
+      for (const auto& row : rows) {
+        if (history.size() >= 168) {output.push_back(buildFeatureRow(row, history));}
+        history.push_back(row.demand);
+      }
+
+      return output;
+    }
+
+    static void exportComparisonCSV(const std::vector<ComparisonRow> rows, const std::filesystem::path& out_path){
+      std::ofstream out(out_path);
+      if (!out.is_open()){throw std::runtime_error("Failed to open " + out_path.string());}
+      out << "Date,Hour,ActualDemand,AdequacyForecast,CalculatedForecast,AbsDiff,PctDiff\n";
+
+      for (const auto& row : rows){
+        out << row.date << "," << row.hour << "," << row.demand << ","
+        << row.adequacy_forecast << "," << row.calculated_forecast << ","
+        << row.abs_diff << "," << row.pct_diff << "\n";
+      }
+    }
+
+    /*
+    static void exportJoinedCSV(const std::vector<JoinedPoint>& rows, const std::filesystem::path& out_path){
+      std::ofstream out(out_path);
+      if (!out.is_open()){throw std::runtime_error("Failed to open " + out_path.string());}
+      out << "Date,Hour,Demand,Forecast\n";
+
+      for (const auto& row : rows){
+        out << row.date << "," << row.hour << "," << row.demand << "," << row.adequacy_forecast << "\n";
+      }
+    }
+    */
+
+    static void exportFeatureCSV(const std::vector<FeatureRow>& rows, const std::filesystem::path& out_path){
+      std::ofstream out(out_path);
+      if (!out.is_open()){throw std::runtime_error("Failed to open " + out_path.string());}
+      out << "Date,Hour,Demand,AdequacyForecast,CalculatedForecast,Lag1,Lag24,Lag168,EMA24,MACD,MACD_HIST,RSI14,PERCENT_B,BANDWIDTH\n";
+
+      for (const auto& row : rows){
+        out << row.date << "," << row.hour << "," << row.demand << "," << row.adequacy_forecast
+        << "," << row.calculated_forecast << "," << "," << row.lag1 << "," << row.lag24 
+        << "," << row.lag168 << "," << row.ema24 << "," << row.macd << "," << row.macd_hist 
+        << "," << row.rsi14 << "," << row.percent_b << "," << row.bandwidth << "\n";
+      }
+    }
+
+    /*
+    static void runAnalysis(sqlite3* db, const std::string& processed_dir){
+      std::filesystem::create_directories(processed_dir);
+
+      auto joined_rows = loadJoinedRows(db);
+      if (joined_rows.empty()){throw std::runtime_error("No joined demand/forecast rows found");}
+      auto comparison_rows = buildComparisonRows(joined_rows);
+      auto feature_rows = buildFeatureRows(comparison_rows);
+      exportJoinedCSV(joined_rows, std::filesystem::path(processed_dir)/"demand_forecast.csv");
+
+      auto demand_history = loadDemandHistory(db);
+      auto adequacy_rows  = loadAdequacyRows(db);
+
+      auto calculated_rows = generateCalculatedForecastRows(
+          demand_history,
+          adequacy_rows.size(),
+          adequacy_rows.front().date
+      );
+
+      auto comparison_rows = compareCalculatedToAdequacy(
+          calculated_rows,
+          adequacy_rows
+      );
+      exportComparisonCSV(comparison_rows, std::filesystem::path(processed_dir)/"forecast_comparison.csv");
+      exportFeatureCSV(feature_rows, std::filesystem::path(processed_dir)/"feature_rows.csv");
+
+      //std::cout << "Joined rows: " << joined_rows.size() << "\n";
+      std::cout << "Comparison rows: " << comparison_rows.size() << "\n";
+      std::cout << "Feature rows: " << feature_rows.size() << "\n";
+    }
+    */
+
+    static void runAnalysis(sqlite3* db, const std::string& processed_dir) {
+      std::filesystem::create_directories(processed_dir);
+
+      auto demand_history = loadDemandHistory(db);
+      if (demand_history.empty()) {throw std::runtime_error("No demand history rows found");}
+
+      auto adequacy_rows = loadAdequacyRows(db);
+      if (adequacy_rows.empty()) {throw std::runtime_error("No adequacy forecast rows found");}
+
+      auto calculated_rows = generateCalculatedForecastRows(demand_history, adequacy_rows);
+      auto comparison_rows = compareCalculatedToAdequacy(calculated_rows, adequacy_rows);
+
+      exportComparisonCSV(comparison_rows, std::filesystem::path(processed_dir) / "forecast_comparison.csv");
+    }
 };
 
 #endif

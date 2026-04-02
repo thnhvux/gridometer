@@ -14,7 +14,7 @@ def main():
 
     log.info("Starting pipeline ...")
     fetch_demand()
-    log.info("Finished fetching Ontario Demand")
+    log.info("Finished fetching Historical Ontario Demand")
 
     fetch_adequacy()
     log.info("Finished fetching Adequacy")

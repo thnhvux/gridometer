@@ -18,7 +18,7 @@ def _setup_logging() -> None:
   log_dir = root_path/"logs"
   log_dir.mkdir(parents=True, exist_ok=True)
 
-  config_file = root_path/"logger.json"
+  config_file = root_path/"config"/"logger.json"
 
   if not config_file.exists():
     raise FileNotFoundError("Unable to find logger configuration file.")

@@ -20,6 +20,8 @@ _CUR_PATH: Path = Path(__file__).resolve()
 _ROOT_PATH: Path = _CUR_PATH.parent.parent
 _DATA_RAW_DIR: Path = _ROOT_PATH/"data"/"raw"
 _DATA_RAW_DIR.mkdir(parents=True, exist_ok=True)
+_DATA_DEMAND_DIR: Path = _DATA_RAW_DIR/"demand"
+_DATA_DEMAND_DIR.mkdir(parents=True, exist_ok=True)
 
 #Return full names of latest files
 def _filter_lastest_by_year(html_text: str, fetch_range: int = 3) -> list[str]:
@@ -72,7 +74,7 @@ def fetch_demand() -> None:
 
     for _f_name in _to_download_files:
       _download_url = _BASE_URL + _f_name
-      _f_save_path = _DATA_RAW_DIR/_f_name
+      _f_save_path = _DATA_DEMAND_DIR/_f_name
       try:
         with _session.get(_download_url, timeout=10, stream=True) as _download_response:
           _download_response.raise_for_status()

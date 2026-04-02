@@ -1,9 +1,11 @@
 {
   "paths": {
-    "input_csv": "data/raw/PUB_Demand.csv",
-    "db_path": "data/database/grid_data.db",
-    "forecast_output_dir": "data/export",
-    "report_path": "output/daily_report.txt"
+    "demand_csv": "data/raw/demand/PUB_Demand_2026_v91.csv",
+    "adequacy_dir": "data/raw/adequacy",
+    "db_path": "data/processed/gridometer.db",
+    "processed_dir": "data/processed",
+    "joined_csv": "data/processed/demand_forecast.csv",
+    "feature_csv": "data/processed/feature_rows.csv"
   },
   "forecast": {
     "horizon_hours": 168
